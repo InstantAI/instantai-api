@@ -1,0 +1,58 @@
+spring:
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/litestudio
+    username: postgres
+    password: postgres
+#  cloud:
+#    gateway:
+#      routes:
+#        - id: nb_test
+#          uri: http://localhost:8888
+#          predicates:
+#            - Path=/notebooks/test/**
+#          filters:
+#            - AddRequestHeader=Hello,World
+            # 移除 TokenRelay 过滤器
+#      globalcors: # 配置跨域，websocket需要
+#        corsConfigurations:
+#          '[/**]':
+#            allowedOrigins: "*"
+#            allowedMethods:
+#              - GET
+#              - POST
+#              - PUT
+#              - DELETE
+#              - OPTIONS
+#            allowedHeaders: "*"
+#            allowCredentials: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: https://keycloak/realms/master/protocol/openid-connect/certs
+      client:
+        registration:
+          keycloak:
+            client-id: litetest
+            client-secret: xyFAWKdvsC2Rr2fPqx09Bc1p0IpGh1I1
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            scope: openid, profile, email
+            client-name: litetest
+            provider: external
+          provider:
+            external:
+              issuer-uri: https://keycloak/realms/master
+              authorization-uri: https://keycloak/realms/master/protocol/openid-connect/auth
+              token-uri: https://keycloak/realms/master/protocol/openid-connect/token
+              user-info-uri: https://keycloak/realms/master/protocol/openid-connect/userinfo
+#          keycloak:
+#            client-name: litetest
+#            client-id: litetest
+#            client-secret: xyFAWKdvsC2Rr2fPqx09Bc1p0IpGh1I1
+#            authorization-grant-type: authorization_code
+#            scope: openid,offline_access,profile
+#            provider: keycloak
+#      provider:
+#        keycloak:
+#          issuer-uri: https://keycloak/realms/master
