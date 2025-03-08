@@ -19,7 +19,7 @@ public class SecurityConfig {
     @Bean
     public SecurityWebFilterChain configure(ServerHttpSecurity http) throws Exception {
         http.authorizeExchange(authorize ->
-                        authorize.pathMatchers("/api/**", "/oauth2/**", "/login/**").permitAll()
+                        authorize.pathMatchers("/oauth2/**", "/login/**").permitAll()
                                 .anyExchange().authenticated())
                 .oauth2Login(withDefaults())
                 .oauth2ResourceServer((oauth2) -> oauth2.jwt(Customizer.withDefaults()));

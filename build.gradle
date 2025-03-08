@@ -2,6 +2,7 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '3.4.1'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id 'io.fabric8.java-generator' version '6.7.0'
 }
 
 group = 'org.instantai'
@@ -34,6 +35,14 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
 	implementation 'org.springframework.security:spring-security-oauth2-resource-server'
 	implementation 'org.springframework.security:spring-security-oauth2-jose'
+	implementation 'org.flywaydb:flyway-core:11.3.1'
+// https://mvnrepository.com/artifact/org.flywaydb/flyway-database-postgresql
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql:11.3.1'
+	// https://mvnrepository.com/artifact/io.fabric8/generator-annotations
+	implementation group: 'io.fabric8', name: 'generator-annotations', version: '7.0.0'
+	implementation group: 'io.fabric8', name: 'kubernetes-client', version: '7.0.0'
+	compileOnly("io.fabric8:kubernetes-client-api:7.0.0")
+
 
 	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j'
 	implementation 'org.springframework.cloud:spring-cloud-starter-gateway'
@@ -51,6 +60,11 @@ dependencyManagement {
 	imports {
 		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
 	}
+}
+
+javaGen {
+	source = file('src/main/resources/crds')
+	target = file('src/main/java')
 }
 
 tasks.named('test') {

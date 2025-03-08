@@ -27,6 +27,12 @@ public class ApiRouteServiceImpl implements ApiRouteService {
     public Mono<ApiRoute> findApiRoute(Long id) {
         return findAndValidateApiRoute(id);
     }
+
+    @Override
+    public Mono<ApiRoute> findApiRoute(String path) {
+        return apiRouteRepository.findByPath(path);
+    }
+
     @Override
     public Mono<Void> createApiRoute(CreateOrUpdateApiRouteRequest createOrUpdateApiRouteRequest) {
         ApiRoute apiRoute = setNewApiRoute(new ApiRoute(), createOrUpdateApiRouteRequest);
@@ -47,6 +53,13 @@ public class ApiRouteServiceImpl implements ApiRouteService {
     @Override
     public Mono<Void> deleteApiRoute(Long id) {
         return findAndValidateApiRoute(id)
+                .flatMap(apiRoute -> apiRouteRepository.deleteById(apiRoute.getId()))
+                .doOnSuccess(obj -> gatewayRouteService.refreshRoutes());
+    }
+
+    @Override
+    public Mono<Void> deleteApiRoute(String path) {
+        return findApiRoute(path)
                 .flatMap(apiRoute -> apiRouteRepository.deleteById(apiRoute.getId()))
                 .doOnSuccess(obj -> gatewayRouteService.refreshRoutes());
     }
