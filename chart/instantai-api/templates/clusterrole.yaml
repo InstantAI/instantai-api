@@ -1,0 +1,12 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "instantai-api.fullname" . }}-role
+  labels:
+    {{- include "instantai-api.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["notebooks", "notebooks/status"]
+    verbs: ["get", "list", "create", "update", "watch", "delete", "deletecollection", "patch"]
+{{- end }}
