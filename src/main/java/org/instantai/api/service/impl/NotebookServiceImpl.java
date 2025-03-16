@@ -17,8 +17,13 @@ import org.kubeflow.v1.notebookspec.template.spec.containers.Env;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 @Service
 @Slf4j
@@ -110,5 +115,38 @@ public class NotebookServiceImpl implements NotebookService {
         notebookClient.inNamespace(namespace).withName(name).delete();
         String path = String.format("/notebooks/%s/%s/**", namespace, name);
         apiRouteService.deleteApiRoute(path).subscribe();
+    }
+
+    @Override
+    public void stopNotebook(String namespace, String name) {
+        MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
+                kubernetesClient.resources(Notebook.class);
+        Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
+        if (notebookResource.get() == null) {
+            throw new NoSuchElementException("notebook not found.");
+        }
+        Instant now = Instant.now();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        ZonedDateTime zonedDateTime = now.atZone(ZoneId.of("UTC"));
+
+        log.info("time: {}", zonedDateTime.format(formatter));
+
+        Notebook notebook = notebookResource.get();
+        notebook.getMetadata().getAnnotations().put("kubeflow-resource-stopped", zonedDateTime.format(formatter));
+        log.info("annotation: {}", notebook.getMetadata().getAnnotations().get("kubeflow-resource-stopped"));
+        notebookClient.inNamespace(namespace).withName(name).patch(notebook);
+    }
+
+    @Override
+    public void startNotebook(String namespace, String name) {
+        MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
+                kubernetesClient.resources(Notebook.class);
+        Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
+        if (notebookResource.get() == null) {
+            throw new NoSuchElementException("notebook not found.");
+        }
+        Notebook notebook = notebookResource.get();
+        notebook.getMetadata().getAnnotations().remove("kubeflow-resource-stopped");
+        notebookClient.inNamespace(namespace).withName(name).patch(notebook);
     }
 }

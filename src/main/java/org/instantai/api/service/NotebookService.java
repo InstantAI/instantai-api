@@ -9,4 +9,6 @@ public interface NotebookService {
     void createOrUpdateNotebook(String namespace,Containers containers);
     List<Notebook> listNotebooks(String namespace);
     void deleteNotebook(String namespace, String name);
+    void stopNotebook(String namespace, String name);
+    void startNotebook(String namespace, String name);
 }

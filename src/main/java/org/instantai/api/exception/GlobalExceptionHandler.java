@@ -20,4 +20,6 @@ public class GlobalExceptionHandler {
         response.put("missingFields", ex.getMissingFields());
         return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
     }
+
+    private record ErrorResponse(String message) {}
 }
