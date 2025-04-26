@@ -9,4 +9,10 @@ rules:
   - apiGroups: ["kubeflow.org"]
     resources: ["notebooks", "notebooks/status"]
     verbs: ["get", "list", "create", "update", "watch", "delete", "deletecollection", "patch"]
+  - apiGroups: [ "" ]
+    resources: [ "resourcequotas" ]
+    verbs: [ "get", "list", "create", "update", "watch", "delete", "patch" ]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
 {{- end }}

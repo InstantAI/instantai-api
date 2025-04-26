@@ -23,15 +23,14 @@ public class WorkspaceServiceImpl implements WorkspaceService {
         return workspaceRepository.findAll();
     }
 
-    private Mono<Void> createK8sNamespaceIfNotExists(Workspace workspace) {
+
+    private Mono<Void> createK8sNamespace(Workspace workspace) {
         return Mono.fromRunnable(() -> {
             try (KubernetesClient client = new KubernetesClientBuilder().build()) {
                 String namespaceName = workspace.getName();
 
                 boolean exists = client.namespaces().withName(namespaceName).get() != null;
-                if (exists) {
-                    log.info("Namespace '{}' already exists in Kubernetes, skipping creation.", namespaceName);
-                } else {
+                if (!exists) {
                     log.info("Creating Kubernetes namespace: {}", namespaceName);
 
                     Namespace ns = new NamespaceBuilder()
@@ -43,30 +42,67 @@ public class WorkspaceServiceImpl implements WorkspaceService {
 
                     client.namespaces().create(ns);
                     log.info("Namespace '{}' created successfully.", namespaceName);
-
-                    // 创建 ResourceQuota
-                    ResourceQuota rq = new ResourceQuotaBuilder()
-                            .withNewMetadata()
-                            .withName("workspace-quota")
-                            .withNamespace(namespaceName)
-                            .endMetadata()
-                            .withNewSpec()
-                            .addToHard("limits.cpu", Quantity.parse(workspace.getCpuLimit()))
-                            .addToHard("limits.memory", Quantity.parse(workspace.getMemoryLimit()))
-                            // GPU 是可选的，根据是否有值判断
-                            .addToHard("requests.nvidia.com/gpu", Quantity.parse(workspace.getGpuLimit() != null ? workspace.getGpuLimit() + "" : "0"))
-                            .endSpec()
-                            .build();
-
-                    client.resourceQuotas().inNamespace(namespaceName).create(rq);
-                    log.info("ResourceQuota for namespace '{}' created successfully.", namespaceName);
                 }
+
+                // 无论是新建还是已有，下面创建/更新 ResourceQuota
+                ResourceQuota rq = new ResourceQuotaBuilder()
+                        .withNewMetadata()
+                        .withName("workspace-quota")
+                        .withNamespace(namespaceName)
+                        .endMetadata()
+                        .withNewSpec()
+                        .addToHard("limits.cpu", Quantity.parse(workspace.getCpuLimit()))
+                        .addToHard("limits.memory", Quantity.parse(workspace.getMemoryLimit()))
+                        .addToHard("requests.nvidia.com/gpu", Quantity.parse(workspace.getGpuLimit() != null ? workspace.getGpuLimit() + "" : "0"))
+                        .endSpec()
+                        .build();
+
+                client.resourceQuotas().inNamespace(namespaceName).createOrReplace(rq);
+                log.info("ResourceQuota for namespace '{}' created or updated successfully.", namespaceName);
+
             } catch (Exception e) {
                 log.error("Failed to create namespace or ResourceQuota", e);
-                throw new RuntimeException("Kubernetes namespace或资源配额创建失败");
+                throw new RuntimeException("Kubernetes命名空间或资源配额创建失败");
             }
         });
     }
+
+    private Mono<Void> updateK8sNamespaceQuota(Workspace workspace) {
+        return Mono.fromRunnable(() -> {
+            try (KubernetesClient client = new KubernetesClientBuilder().build()) {
+                String namespaceName = workspace.getName();
+
+                var existingNs = client.namespaces().withName(namespaceName).get();
+                if (existingNs == null) {
+                    log.warn("Namespace '{}' does not exist, creating...", namespaceName);
+                    createK8sNamespace(workspace).block(); // 注意这里同步block一下
+                    return;
+                }
+
+                log.info("Updating ResourceQuota for namespace: {}", namespaceName);
+
+                ResourceQuota rq = new ResourceQuotaBuilder()
+                        .withNewMetadata()
+                        .withName("workspace-quota")
+                        .withNamespace(namespaceName)
+                        .endMetadata()
+                        .withNewSpec()
+                        .addToHard("limits.cpu", Quantity.parse(workspace.getCpuLimit()))
+                        .addToHard("limits.memory", Quantity.parse(workspace.getMemoryLimit()))
+                        .addToHard("requests.nvidia.com/gpu", Quantity.parse(workspace.getGpuLimit() != null ? workspace.getGpuLimit() + "" : "0"))
+                        .endSpec()
+                        .build();
+
+                client.resourceQuotas().inNamespace(namespaceName).createOrReplace(rq);
+                log.info("ResourceQuota for namespace '{}' updated successfully.", namespaceName);
+
+            } catch (Exception e) {
+                log.error("Failed to update ResourceQuota", e);
+                throw new RuntimeException("Kubernetes资源配额更新失败");
+            }
+        });
+    }
+
 
     private Mono<Void> deleteK8sNamespaceIfExists(String namespaceName) {
         return Mono.fromRunnable(() -> {
@@ -88,28 +124,34 @@ public class WorkspaceServiceImpl implements WorkspaceService {
 
     @Override
     public Mono<Workspace> createWorkspace(Workspace workspace) {
-        log.info("Attempting to create workspace: {}", workspace.getName());
+        log.info("Attempting to create or update workspace: {}", workspace.getName());
 
         return workspaceRepository.existsById(workspace.getName())
                 .flatMap(exists -> {
                     if (exists) {
-                        log.warn("Workspace already exists: {}", workspace.getName());
-                        return Mono.error(new IllegalArgumentException("Workspace已存在"));
-                    } else {
+                        // 已存在，更新数据库并且更新 K8s 的 ResourceQuota
+                        log.info("Workspace '{}' exists. Updating...", workspace.getName());
+                        workspace.setNewEntry(false);
                         return workspaceRepository.save(workspace)
-                                .flatMap(saved -> createK8sNamespaceIfNotExists(saved)
+                                .flatMap(saved -> updateK8sNamespaceQuota(saved)
                                         .thenReturn(saved)
                                 )
-                                .doOnSuccess(saved -> log.info("Workspace saved successfully: {}", saved))
-                                .doOnError(error -> log.error("Failed to save workspace", error));
+                                .doOnSuccess(saved -> log.info("Workspace updated successfully: {}", saved))
+                                .doOnError(error -> log.error("Failed to update workspace", error));
+                    } else {
+                        // 不存在，正常新建
+                        log.info("Workspace '{}' does not exist. Creating...", workspace.getName());
+                        return workspaceRepository.save(workspace)
+                                .flatMap(saved -> createK8sNamespace(saved)
+                                        .thenReturn(saved)
+                                )
+                                .doOnSuccess(saved -> log.info("Workspace created successfully: {}", saved))
+                                .doOnError(error -> log.error("Failed to create workspace", error));
                     }
                 })
                 .onErrorResume(error -> {
-                    if (error instanceof IllegalArgumentException) {
-                        return Mono.error(error);
-                    }
-                    log.error("Error creating workspace", error);
-                    return Mono.error(new RuntimeException("创建失败，请稍后重试"));
+                    log.error("Error creating or updating workspace", error);
+                    return Mono.error(new RuntimeException("操作失败，请稍后重试"));
                 });
     }
 

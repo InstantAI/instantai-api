@@ -32,7 +32,7 @@ public class WorkspaceController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Mono<ResponseEntity<Workspace>> createWorkspace(@Valid @RequestBody Workspace workspace) {
+    public Mono<ResponseEntity<Workspace>> createOrUpdateWorkspace(@Valid @RequestBody Workspace workspace) {
         return workspaceService.createWorkspace(workspace)
                 .map(created -> ResponseEntity
                         .created(URI.create("/api/workspaces/" + created.getName()))
