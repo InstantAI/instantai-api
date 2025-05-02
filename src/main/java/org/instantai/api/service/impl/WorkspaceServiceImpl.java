@@ -5,6 +5,8 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.instantai.api.model.Workspace;
+import org.instantai.api.model.WorkspacePermission;
+import org.instantai.api.repository.WorkspacePermissionRepository;
 import org.instantai.api.repository.WorkspaceRepository;
 import org.instantai.api.service.WorkspaceService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,9 @@ import reactor.core.publisher.Mono;
 public class WorkspaceServiceImpl implements WorkspaceService {
     @Autowired
     private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private WorkspacePermissionRepository workspacePermissionRepository;
 
     @Override
     public Flux<Workspace> findWorkspaces() {
@@ -173,5 +178,25 @@ public class WorkspaceServiceImpl implements WorkspaceService {
                     }
                     return Mono.error(new RuntimeException("删除失败，请稍后重试"));
                 });
+    }
+
+    @Override
+    public Mono<WorkspacePermission> addPermission(String workspaceName, String username, String role) {
+        WorkspacePermission permission = WorkspacePermission.builder()
+                .workspaceName(workspaceName)
+                .username(username)
+                .role(role)
+                .build();
+        return workspacePermissionRepository.save(permission);
+    }
+
+    @Override
+    public Mono<Void> removePermission(String workspaceName, String username) {
+        return workspacePermissionRepository.deleteByWorkspaceNameAndUsername(workspaceName, username);
+    }
+
+    @Override
+    public Mono<WorkspacePermission> getPermission(String workspaceName, String username) {
+        return workspacePermissionRepository.findByWorkspaceNameAndUsername(workspaceName, username);
     }
 }

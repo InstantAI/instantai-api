@@ -3,6 +3,9 @@ package org.instantai.api.controller;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.instantai.api.model.Workspace;
+import org.instantai.api.model.WorkspacePermission;
+import org.instantai.api.model.WorkspacePermissionRequest;
+import org.instantai.api.service.UserService;
 import org.instantai.api.service.WorkspaceService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -19,6 +22,9 @@ import java.net.URI;
 public class WorkspaceController {
     @Autowired
     private WorkspaceService workspaceService;
+
+    @Autowired
+    private UserService userService;
 
     @GetMapping("")
     public Mono<ResponseEntity<Flux<Workspace>>> getWorkspace() {
@@ -63,6 +69,24 @@ public class WorkspaceController {
 
     private ResponseEntity<Void> buildVoidResponseEntity(HttpStatus status) {
         return ResponseEntity.status(status).build();
+    }
+
+    @GetMapping("/{name}/permissions/me")
+    public Mono<WorkspacePermission> getPermissions(@PathVariable String name) {
+        return userService.getCurrentUsername()
+                .flatMap(username -> workspaceService.getPermission(name, username));
+    }
+
+    @PostMapping("/{name}/permissions")
+    public Mono<WorkspacePermission> addPermission(@PathVariable String name,
+                                                   @RequestBody WorkspacePermissionRequest request) {
+        return workspaceService.addPermission(name, request.getUsername(), request.getRole());
+    }
+
+    @DeleteMapping("/{name}/permissions/{username}")
+    public Mono<Void> removePermission(@PathVariable String workspace,
+                                       @PathVariable String username) {
+        return workspaceService.removePermission(workspace, username);
     }
 
 }

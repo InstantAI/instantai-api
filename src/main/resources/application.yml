@@ -8,7 +8,7 @@ spring:
     password: postgres
 
   flyway:
-    enabled: false
+    enabled: true
     url: jdbc:postgresql://localhost:30000/instantai
     user: postgres
     password: postgres
