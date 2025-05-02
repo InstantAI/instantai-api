@@ -18,4 +18,5 @@ public interface ApiRouteService {
 
     Mono<Void> deleteApiRoute(Long id);
     Mono<Void> deleteApiRoute(String path);
+    Mono<Long> getApiRouteCount();
 }

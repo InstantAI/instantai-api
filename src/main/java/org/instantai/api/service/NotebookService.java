@@ -2,6 +2,7 @@ package org.instantai.api.service;
 
 import org.kubeflow.v1.Notebook;
 import org.kubeflow.v1.notebookspec.template.spec.Containers;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -11,4 +12,5 @@ public interface NotebookService {
     void deleteNotebook(String namespace, String name);
     void stopNotebook(String namespace, String name);
     void startNotebook(String namespace, String name);
+    Mono<Long> getTotalNumber();
 }

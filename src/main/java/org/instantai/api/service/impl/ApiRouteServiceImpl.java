@@ -64,6 +64,11 @@ public class ApiRouteServiceImpl implements ApiRouteService {
                 .doOnSuccess(obj -> gatewayRouteService.refreshRoutes());
     }
 
+    @Override
+    public Mono<Long> getApiRouteCount() {
+        return apiRouteRepository.count();
+    }
+
     private Mono<ApiRoute> findAndValidateApiRoute(Long id) {
         return apiRouteRepository.findById(id)
                 .switchIfEmpty(Mono.error(

@@ -16,6 +16,7 @@ import org.kubeflow.v1.notebookspec.template.spec.Containers;
 import org.kubeflow.v1.notebookspec.template.spec.containers.Env;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -148,5 +149,10 @@ public class NotebookServiceImpl implements NotebookService {
         Notebook notebook = notebookResource.get();
         notebook.getMetadata().getAnnotations().remove("kubeflow-resource-stopped");
         notebookClient.inNamespace(namespace).withName(name).patch(notebook);
+    }
+
+    @Override
+    public Mono<Long> getTotalNumber() {
+        return apiRouteService.getApiRouteCount();
     }
 }
