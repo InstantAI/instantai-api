@@ -23,6 +23,9 @@ class WorkspaceServiceTest {
     @Mock
     private WorkspaceRepository workspaceRepository;
 
+    @Mock
+    private UserService userService;
+
     @InjectMocks
     private WorkspaceServiceImpl workspaceService;
 
@@ -48,6 +51,10 @@ class WorkspaceServiceTest {
         when(workspaceRepository.save(any())).thenReturn(Mono.just(workspace));
         when(workspaceRepository.findById(testName)).thenReturn(Mono.just(workspace));
         when(workspaceRepository.deleteById(testName)).thenReturn(Mono.empty());
+
+        // ✅ mock 用户权限
+        when(userService.getCurrentUsername()).thenReturn(Mono.just("test-user"));
+        when(userService.hasAdminRole()).thenReturn(Mono.just(true));
 
         StepVerifier.create(workspaceService.createWorkspace(workspace))
                 .expectNextMatches(w -> w.getName().equals(testName))

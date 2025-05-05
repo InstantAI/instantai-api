@@ -1,4 +1,5 @@
 package org.instantai.api.service.impl;
+import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
@@ -8,6 +9,8 @@ import org.instantai.api.exception.MissingFieldException;
 import org.instantai.api.model.CreateOrUpdateApiRouteRequest;
 import org.instantai.api.service.ApiRouteService;
 import org.instantai.api.service.NotebookService;
+import org.instantai.api.service.UserService;
+import org.instantai.api.service.WorkspaceService;
 import org.kubeflow.v1.Notebook;
 import org.kubeflow.v1.NotebookSpec;
 import org.kubeflow.v1.notebookspec.Template;
@@ -15,12 +18,13 @@ import org.kubeflow.v1.notebookspec.template.Spec;
 import org.kubeflow.v1.notebookspec.template.spec.Containers;
 import org.kubeflow.v1.notebookspec.template.spec.containers.Env;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Instant;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +33,12 @@ import java.util.NoSuchElementException;
 @Service
 @Slf4j
 public class NotebookServiceImpl implements NotebookService {
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private WorkspaceService workspaceService;
+
     @Autowired
     private KubernetesClient kubernetesClient;
 
@@ -53,51 +63,79 @@ public class NotebookServiceImpl implements NotebookService {
         return missingFields;
     }
 
-    @Override
-    public void createOrUpdateNotebook(String namespace,Containers containers) {
-        List<String> missingFields = validateRequiredFields(containers);
-        if (!missingFields.isEmpty()) {
-            throw new MissingFieldException("Missing required fields", missingFields);
-        }
-        String name = containers.getName();
+    private Notebook buildNotebookSpec(String namespace, String name, String path, Containers containers) {
         Notebook notebook = new Notebook();
-        notebook.setMetadata(new io.fabric8.kubernetes.api.model.ObjectMetaBuilder()
+
+        notebook.setMetadata(new ObjectMetaBuilder()
                 .withName(name)
                 .withNamespace(namespace)
                 .build());
 
-        NotebookSpec spec = new NotebookSpec();
-        Template template = new Template();
-        Spec podSpec = new Spec();
-        // 添加环境变量 NB_PREFIX
         Env envVar = new Env();
         envVar.setName("NB_PREFIX");
-        String path = String.format("/notebooks/%s/%s", namespace, name);
         envVar.setValue(path);
-        // 创建并设置容器
+
         containers.setEnv(List.of(envVar));
         containers.setName("main");
+
+        Spec podSpec = new Spec();
         podSpec.setContainers(List.of(containers));
+
+        Template template = new Template();
         template.setSpec(podSpec);
+
+        NotebookSpec spec = new NotebookSpec();
         spec.setTemplate(template);
         notebook.setSpec(spec);
 
-        MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
-                kubernetesClient.resources(Notebook.class);
-        Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
-        if (notebookResource.get() != null) {
-            log.info("name: {}", notebookResource.get().getMetadata().getName());
-            // 如果 Notebook 已存在，则替换
-            notebookResource.replace(notebook);
-        } else {
-            // 如果 Notebook 不存在，则创建
-            notebookClient.resource(notebook).create();
-            CreateOrUpdateApiRouteRequest route = new CreateOrUpdateApiRouteRequest();
-            route.setPath(path + "/**");
-            route.setUri(String.format("http://%s.%s.svc", name, namespace));
-            apiRouteService.createApiRoute(route).subscribe();
-        }
+        return notebook;
+    }
 
+
+    @Override
+    public Mono<Void> createOrUpdateNotebook(String namespace,Containers containers) {
+        List<String> missingFields = validateRequiredFields(containers);
+        if (!missingFields.isEmpty()) {
+            return Mono.error(new MissingFieldException("Missing required fields", missingFields));
+        }
+        return userService.getCurrentUsername()
+                .flatMap(username -> workspaceService.isAdminOrEditor(namespace, username))
+                .flatMap(hasPermission -> {
+                    if (!hasPermission) {
+                        return Mono.error(new AccessDeniedException("No permission to create/update notebook"));
+                    }
+
+                    String name = containers.getName();
+                    String path = String.format("/notebooks/%s/%s", namespace, name);
+
+                    // 构造 Notebook 对象
+                    Notebook notebook = buildNotebookSpec(namespace, name, path, containers);
+
+                    MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
+                            kubernetesClient.resources(Notebook.class);
+                    Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
+
+                    return Mono.fromCallable(notebookResource::get)
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .flatMap(existing -> {
+                                if (existing != null) {
+                                    log.info("Notebook exists, replacing: {}", existing.getMetadata().getName());
+                                    return Mono.fromCallable(() -> notebookResource.replace(notebook))
+                                            .subscribeOn(Schedulers.boundedElastic())
+                                            .then();
+                                } else {
+                                    return Mono.fromCallable(() -> notebookClient.resource(notebook).create())
+                                            .subscribeOn(Schedulers.boundedElastic())
+                                            .doOnSuccess(n -> {
+                                                CreateOrUpdateApiRouteRequest route = new CreateOrUpdateApiRouteRequest();
+                                                route.setPath(path + "/**");
+                                                route.setUri(String.format("http://%s.%s.svc", name, namespace));
+                                                apiRouteService.createApiRoute(route).subscribe();
+                                            })
+                                            .then();
+                                }
+                            });
+                });
     }
 
     @Override
@@ -111,44 +149,72 @@ public class NotebookServiceImpl implements NotebookService {
 
     @Override
     public void deleteNotebook(String namespace, String name) {
-        MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
-                kubernetesClient.resources(Notebook.class);
-        notebookClient.inNamespace(namespace).withName(name).delete();
-        String path = String.format("/notebooks/%s/%s/**", namespace, name);
-        apiRouteService.deleteApiRoute(path).subscribe();
+        userService.getCurrentUsername().flatMap(currentUsername -> workspaceService.isAdminOrEditor(namespace, currentUsername)
+                .flatMap(hasPermission -> {
+                    if (!hasPermission) {
+                        return Mono.error(new AccessDeniedException("No permission"));
+                    }
+                    MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
+                            kubernetesClient.resources(Notebook.class);
+                    notebookClient.inNamespace(namespace).withName(name).delete();
+
+                    // 删除 API 路由
+                    return apiRouteService.deleteApiRoute(String.format("/notebooks/%s/%s/**", namespace, name))
+                            .then();
+                })
+        );
     }
 
     @Override
     public void stopNotebook(String namespace, String name) {
-        MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
-                kubernetesClient.resources(Notebook.class);
-        Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
-        if (notebookResource.get() == null) {
-            throw new NoSuchElementException("notebook not found.");
-        }
-        Instant now = Instant.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
-        ZonedDateTime zonedDateTime = now.atZone(ZoneId.of("UTC"));
+        userService.getCurrentUsername()
+                .flatMap(currentUsername -> workspaceService.isAdminOrEditor(namespace, currentUsername)
+                        .flatMap(hasPermission -> {
+                            if (!hasPermission) {
+                                return Mono.error(new AccessDeniedException("No permission to stop notebook"));
+                            }
 
-        log.info("time: {}", zonedDateTime.format(formatter));
+                            MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
+                                    kubernetesClient.resources(Notebook.class);
+                            Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
+                            Notebook notebook = notebookResource.get();
+                            if (notebook == null) {
+                                return Mono.error(new NoSuchElementException("notebook not found."));
+                            }
 
-        Notebook notebook = notebookResource.get();
-        notebook.getMetadata().getAnnotations().put("kubeflow-resource-stopped", zonedDateTime.format(formatter));
-        log.info("annotation: {}", notebook.getMetadata().getAnnotations().get("kubeflow-resource-stopped"));
-        notebookClient.inNamespace(namespace).withName(name).patch(notebook);
+                            Instant now = Instant.now();
+                            String timeStr = now.atZone(ZoneId.of("UTC"))
+                                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'"));
+
+                            notebook.getMetadata().getAnnotations().put("kubeflow-resource-stopped", timeStr);
+                            notebookClient.inNamespace(namespace).withName(name).patch(notebook);
+
+                            return Mono.empty();
+                        }));
     }
 
     @Override
     public void startNotebook(String namespace, String name) {
-        MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
-                kubernetesClient.resources(Notebook.class);
-        Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
-        if (notebookResource.get() == null) {
-            throw new NoSuchElementException("notebook not found.");
-        }
-        Notebook notebook = notebookResource.get();
-        notebook.getMetadata().getAnnotations().remove("kubeflow-resource-stopped");
-        notebookClient.inNamespace(namespace).withName(name).patch(notebook);
+        userService.getCurrentUsername()
+                .flatMap(currentUsername -> workspaceService.isAdminOrEditor(namespace, currentUsername)
+                        .flatMap(hasPermission -> {
+                            if (!hasPermission) {
+                                return Mono.error(new AccessDeniedException("No permission to start notebook"));
+                            }
+
+                            MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
+                                    kubernetesClient.resources(Notebook.class);
+                            Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
+                            Notebook notebook = notebookResource.get();
+                            if (notebook == null) {
+                                return Mono.error(new NoSuchElementException("notebook not found."));
+                            }
+
+                            notebook.getMetadata().getAnnotations().remove("kubeflow-resource-stopped");
+                            notebookClient.inNamespace(namespace).withName(name).patch(notebook);
+
+                            return Mono.empty();
+                        }));
     }
 
     @Override

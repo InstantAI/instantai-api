@@ -7,7 +7,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 public interface NotebookService {
-    void createOrUpdateNotebook(String namespace,Containers containers);
+    Mono<Void> createOrUpdateNotebook(String namespace,Containers containers);
     List<Notebook> listNotebooks(String namespace);
     void deleteNotebook(String namespace, String name);
     void stopNotebook(String namespace, String name);

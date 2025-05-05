@@ -1,6 +1,8 @@
 package org.instantai.api.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -25,9 +27,11 @@ public class Workspace implements Persistable<String> {
     private String name;
 
     @Column("cpu_limit")
+    @NotBlank
     private String cpuLimit;
 
     @Column("memory_limit")
+    @NotBlank
     private String memoryLimit;
 
     @Column("gpu_limit")

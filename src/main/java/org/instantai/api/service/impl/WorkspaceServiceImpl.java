@@ -6,17 +6,25 @@ import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.instantai.api.model.Workspace;
 import org.instantai.api.model.WorkspacePermission;
+import org.instantai.api.model.WorkspaceWithRole;
 import org.instantai.api.repository.WorkspacePermissionRepository;
 import org.instantai.api.repository.WorkspaceRepository;
+import org.instantai.api.service.UserService;
 import org.instantai.api.service.WorkspaceService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
+
 @Service
 @Slf4j
 public class WorkspaceServiceImpl implements WorkspaceService {
+    @Autowired
+    private UserService userService;
+
     @Autowired
     private WorkspaceRepository workspaceRepository;
 
@@ -24,8 +32,44 @@ public class WorkspaceServiceImpl implements WorkspaceService {
     private WorkspacePermissionRepository workspacePermissionRepository;
 
     @Override
-    public Flux<Workspace> findWorkspaces() {
-        return workspaceRepository.findAll();
+    public Flux<WorkspaceWithRole> findWorkspaces() {
+        return getCurrentUserWorkspacesWithRole();
+    }
+
+    private Mono<List<WorkspaceWithRole>> getWorkspacesWithRole(String username) {
+        return workspacePermissionRepository.findAllByUsername(username)
+                .flatMap(permission ->
+                        workspaceRepository.findById(permission.getWorkspaceName())
+                                .map(workspace -> new WorkspaceWithRole(workspace, permission.getRole()))
+                )
+                .collectList(); // 返回 Mono<List<WorkspaceWithRole>>
+    }
+
+    private Flux<WorkspaceWithRole> getCurrentUserWorkspacesWithRole() {
+        return userService.hasAdminRole()
+                .flatMapMany(isAdmin -> {
+                    if (isAdmin) {
+                        return workspaceRepository.findAll()
+                                .map(workspace -> new WorkspaceWithRole(workspace, "admin"));
+                    } else {
+                        // 假设这是获取普通用户工作空间的方法
+                        return getRegularUserWorkspacesWithRole();
+                    }
+                });
+    }
+
+    private Flux<WorkspaceWithRole> getRegularUserWorkspacesWithRole() {
+        return userService.getCurrentUsername()
+                .flatMapMany(username ->
+                        workspacePermissionRepository.findAllByUsername(username)
+                                .flatMap(permission ->
+                                        workspaceRepository.findById(permission.getWorkspaceName())
+                                                .map(workspace -> new WorkspaceWithRole(
+                                                        workspace,
+                                                        permission.getRole()
+                                                ))
+                                )
+                );
     }
 
 
@@ -130,73 +174,122 @@ public class WorkspaceServiceImpl implements WorkspaceService {
     @Override
     public Mono<Workspace> createWorkspace(Workspace workspace) {
         log.info("Attempting to create or update workspace: {}", workspace.getName());
-
-        return workspaceRepository.existsById(workspace.getName())
-                .flatMap(exists -> {
-                    if (exists) {
-                        // 已存在，更新数据库并且更新 K8s 的 ResourceQuota
-                        log.info("Workspace '{}' exists. Updating...", workspace.getName());
-                        workspace.setNewEntry(false);
-                        return workspaceRepository.save(workspace)
-                                .flatMap(saved -> updateK8sNamespaceQuota(saved)
-                                        .thenReturn(saved)
-                                )
-                                .doOnSuccess(saved -> log.info("Workspace updated successfully: {}", saved))
-                                .doOnError(error -> log.error("Failed to update workspace", error));
-                    } else {
-                        // 不存在，正常新建
-                        log.info("Workspace '{}' does not exist. Creating...", workspace.getName());
-                        return workspaceRepository.save(workspace)
-                                .flatMap(saved -> createK8sNamespace(saved)
-                                        .thenReturn(saved)
-                                )
-                                .doOnSuccess(saved -> log.info("Workspace created successfully: {}", saved))
-                                .doOnError(error -> log.error("Failed to create workspace", error));
+        return userService.getCurrentUsername().flatMap(currentUsername -> userService.hasAdminRole()
+                .flatMap(hasPermission -> {
+                    if (!hasPermission) {
+                        return Mono.error(new AccessDeniedException("No permission to create workspace"));
                     }
+                    return workspaceRepository.existsById(workspace.getName())
+                            .flatMap(exists -> {
+                                if (exists) {
+                                    // 已存在，更新数据库并且更新 K8s 的 ResourceQuota
+                                    log.info("Workspace '{}' exists. Updating...", workspace.getName());
+                                    workspace.setNewEntry(false);
+                                    return workspaceRepository.save(workspace)
+                                            .flatMap(saved -> updateK8sNamespaceQuota(saved)
+                                                    .thenReturn(saved)
+                                            )
+                                            .doOnSuccess(saved -> log.info("Workspace updated successfully: {}", saved))
+                                            .doOnError(error -> log.error("Failed to update workspace", error));
+                                } else {
+                                    // 不存在，正常新建
+                                    log.info("Workspace '{}' does not exist. Creating...", workspace.getName());
+                                    return workspaceRepository.save(workspace)
+                                            .flatMap(saved -> createK8sNamespace(saved)
+                                                    .thenReturn(saved)
+                                            )
+                                            .doOnSuccess(saved -> log.info("Workspace created successfully: {}", saved))
+                                            .doOnError(error -> log.error("Failed to create workspace", error));
+                                }
+                            })
+                            .onErrorResume(error -> {
+                                log.error("Error creating or updating workspace", error);
+                                return Mono.error(new RuntimeException("操作失败，请稍后重试"));
+                            });
                 })
-                .onErrorResume(error -> {
-                    log.error("Error creating or updating workspace", error);
-                    return Mono.error(new RuntimeException("操作失败，请稍后重试"));
-                });
+        );
+
     }
 
     @Override
     public Mono<Void> deleteWorkspace(String workspaceName) {
         log.info("Attempting to delete workspace: {}", workspaceName);
-
-        return workspaceRepository.findById(workspaceName)
-                .switchIfEmpty(Mono.error(new IllegalArgumentException("Workspace不存在")))
-                .flatMap(workspace ->
-                        workspaceRepository.deleteById(workspaceName)
-                                .then(deleteK8sNamespaceIfExists(workspaceName))
-                )
-                .doOnSuccess(v -> log.info("Workspace '{}' deleted successfully", workspaceName))
-                .doOnError(error -> log.error("Failed to delete workspace '{}'", workspaceName, error))
-                .onErrorResume(error -> {
-                    if (error instanceof IllegalArgumentException) {
-                        return Mono.error(error);
+        return userService.getCurrentUsername().flatMap(currentUsername -> userService.hasAdminRole()
+                .flatMap(hasPermission -> {
+                    if (!hasPermission) {
+                        return Mono.error(new AccessDeniedException("No permission to delete workspace"));
                     }
-                    return Mono.error(new RuntimeException("删除失败，请稍后重试"));
-                });
+                    return workspaceRepository.findById(workspaceName)
+                            .switchIfEmpty(Mono.error(new IllegalArgumentException("Workspace不存在")))
+                            .flatMap(workspace ->
+                                    workspaceRepository.deleteById(workspaceName)
+                                            .then(deleteK8sNamespaceIfExists(workspaceName))
+                            )
+                            .doOnSuccess(v -> log.info("Workspace '{}' deleted successfully", workspaceName))
+                            .doOnError(error -> log.error("Failed to delete workspace '{}'", workspaceName, error))
+                            .onErrorResume(error -> {
+                                if (error instanceof IllegalArgumentException) {
+                                    return Mono.error(error);
+                                }
+                                return Mono.error(new RuntimeException("删除失败，请稍后重试"));
+                            });
+                }));
     }
 
     @Override
     public Mono<WorkspacePermission> addPermission(String workspaceName, String username, String role) {
-        WorkspacePermission permission = WorkspacePermission.builder()
-                .workspaceName(workspaceName)
-                .username(username)
-                .role(role)
-                .build();
-        return workspacePermissionRepository.save(permission);
+        return userService.getCurrentUsername()
+                .flatMap(currentUsername -> isAdminOrEditor(workspaceName, currentUsername)
+                        .flatMap(hasPermission -> {
+                            if (!hasPermission) {
+                                return Mono.error(new AccessDeniedException("No permission"));
+                            }
+                            WorkspacePermission permission = WorkspacePermission.builder()
+                                    .workspaceName(workspaceName)
+                                    .username(username)
+                                    .role(role)
+                                    .build();
+                            return workspacePermissionRepository.save(permission);
+                        })
+                );
+
     }
 
     @Override
     public Mono<Void> removePermission(String workspaceName, String username) {
-        return workspacePermissionRepository.deleteByWorkspaceNameAndUsername(workspaceName, username);
+        return userService.getCurrentUsername()
+                .flatMap(currentUsername -> isAdminOrEditor(workspaceName, currentUsername)
+                        .flatMap(hasPermission -> {
+                            if (!hasPermission) {
+                                return Mono.error(new AccessDeniedException("No permission"));
+                            }
+                            return workspacePermissionRepository.deleteByWorkspaceNameAndUsername(workspaceName, username);
+                        }));
     }
 
     @Override
     public Mono<WorkspacePermission> getPermission(String workspaceName, String username) {
         return workspacePermissionRepository.findByWorkspaceNameAndUsername(workspaceName, username);
+    }
+
+    @Override
+    public Flux<WorkspacePermission> getPermissions(String workspaceName) {
+        return userService.getCurrentUsername()
+                .flatMapMany(currentUsername ->
+                        workspacePermissionRepository.findByWorkspaceName(workspaceName)
+                                .filterWhen(permission ->
+                                        isAdminOrEditor(workspaceName, currentUsername))
+                                .switchIfEmpty(Flux.error(new AccessDeniedException("No permission")))
+                );
+    }
+
+    @Override
+    public Mono<Boolean> isAdminOrEditor(String workspaceName, String username) {
+        Mono<Boolean> isAdmin = userService.hasAdminRole();
+        Mono<Boolean> isEditor = this.getPermission(workspaceName, username)
+                .map(p -> "edit".equalsIgnoreCase(p.getRole()))
+                .defaultIfEmpty(false);
+        return Mono.zip(isAdmin, isEditor)
+                .map(tuple -> tuple.getT1() || tuple.getT2());
     }
 }

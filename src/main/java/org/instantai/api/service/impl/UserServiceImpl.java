@@ -3,11 +3,15 @@ package org.instantai.api.service.impl;
 import org.instantai.api.service.UserService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
+import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class UserServiceImpl implements UserService {
@@ -16,6 +20,23 @@ public class UserServiceImpl implements UserService {
         return ReactiveSecurityContextHolder.getContext()
                 .map(context -> context.getAuthentication())
                 .flatMap(this::extractUsername);
+    }
+
+    @Override
+    public Mono<Boolean> hasAdminRole() {
+        return ReactiveSecurityContextHolder.getContext()
+                .map(SecurityContext::getAuthentication)
+                .filter(auth -> auth instanceof JwtAuthenticationToken)
+                .cast(JwtAuthenticationToken.class)
+                .map(token -> {
+                    Map<String, Object> resourceAccess = token.getToken().getClaim("resource_access");
+                    if (resourceAccess == null) return false;
+                    Map<String, Object> instantai = (Map<String, Object>) resourceAccess.get("instantai");
+                    if (instantai == null) return false;
+                    List<String> roles = (List<String>) instantai.get("roles");
+                    return roles != null && roles.contains("admin");
+                })
+                .defaultIfEmpty(false);
     }
 
     private Mono<String> extractUsername(Authentication authentication) {

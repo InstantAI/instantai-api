@@ -7,6 +7,7 @@ import org.kubeflow.v1.notebookspec.template.spec.Containers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.repository.query.Param;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -19,8 +20,8 @@ public class NotebookController {
     private NotebookService notebookService;
 
     @PostMapping("/{namespace}")
-    public void createNotebook(@PathVariable String namespace, @RequestBody Containers containers) {
-        notebookService.createOrUpdateNotebook(namespace, containers);
+    public Mono<Void> createNotebook(@PathVariable String namespace, @RequestBody Containers containers) {
+        return notebookService.createOrUpdateNotebook(namespace, containers);
     }
 
     @GetMapping("/{namespace}")
