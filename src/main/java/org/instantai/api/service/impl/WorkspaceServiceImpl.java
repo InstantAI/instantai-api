@@ -244,12 +244,22 @@ public class WorkspaceServiceImpl implements WorkspaceService {
                             if (!hasPermission) {
                                 return Mono.error(new AccessDeniedException("No permission"));
                             }
-                            WorkspacePermission permission = WorkspacePermission.builder()
-                                    .workspaceName(workspaceName)
-                                    .username(username)
-                                    .role(role)
-                                    .build();
-                            return workspacePermissionRepository.save(permission);
+                            return workspacePermissionRepository.findByWorkspaceNameAndUsername(workspaceName, username)
+                                    .flatMap(existing -> {
+                                        existing.setRole(role);
+                                        log.info("exist");
+                                        return workspacePermissionRepository.save(existing);
+                                    })
+                                    .switchIfEmpty(
+                                            Mono.defer(() -> {
+                                                WorkspacePermission permission = WorkspacePermission.builder()
+                                                        .workspaceName(workspaceName)
+                                                        .username(username)
+                                                        .role(role)
+                                                        .build();
+                                                return workspacePermissionRepository.save(permission);
+                                            })
+                                    );
                         })
                 );
 

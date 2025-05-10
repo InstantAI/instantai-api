@@ -1,5 +1,6 @@
 package org.instantai.api.service.impl;
 
+import lombok.extern.slf4j.Slf4j;
 import org.instantai.api.service.UserService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
@@ -14,13 +15,19 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class UserServiceImpl implements UserService {
     @Override
     public Mono<String> getCurrentUsername() {
+        log.info("start get username");
         return ReactiveSecurityContextHolder.getContext()
-                .map(context -> context.getAuthentication())
+                .doOnNext(ctx -> log.info("Security context: {}", ctx))
+                .map(SecurityContext::getAuthentication)
+                .doOnNext(auth -> log.info("Authentication: {}", auth))
                 .flatMap(this::extractUsername);
     }
+
+
 
     @Override
     public Mono<Boolean> hasAdminRole() {

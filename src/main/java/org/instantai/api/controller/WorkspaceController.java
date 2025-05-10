@@ -87,9 +87,9 @@ public class WorkspaceController {
     }
 
     @DeleteMapping("/{name}/permissions/{username}")
-    public Mono<Void> removePermission(@PathVariable String workspace,
+    public Mono<Void> removePermission(@PathVariable String name,
                                        @PathVariable String username) {
-        return workspaceService.removePermission(workspace, username);
+        return workspaceService.removePermission(name, username);
     }
 
 }

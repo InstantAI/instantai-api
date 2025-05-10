@@ -26,9 +26,7 @@ import reactor.core.scheduler.Schedulers;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.NoSuchElementException;
+import java.util.*;
 
 @Service
 @Slf4j
@@ -148,8 +146,8 @@ public class NotebookServiceImpl implements NotebookService {
     }
 
     @Override
-    public void deleteNotebook(String namespace, String name) {
-        userService.getCurrentUsername().flatMap(currentUsername -> workspaceService.isAdminOrEditor(namespace, currentUsername)
+    public Mono<Void> deleteNotebook(String namespace, String name) {
+        return userService.getCurrentUsername().flatMap(currentUsername -> workspaceService.isAdminOrEditor(namespace, currentUsername)
                 .flatMap(hasPermission -> {
                     if (!hasPermission) {
                         return Mono.error(new AccessDeniedException("No permission"));
@@ -166,10 +164,11 @@ public class NotebookServiceImpl implements NotebookService {
     }
 
     @Override
-    public void stopNotebook(String namespace, String name) {
-        userService.getCurrentUsername()
+    public Mono<Void> stopNotebook(String namespace, String name) {
+        return userService.getCurrentUsername()
                 .flatMap(currentUsername -> workspaceService.isAdminOrEditor(namespace, currentUsername)
                         .flatMap(hasPermission -> {
+                            log.info("has permission");
                             if (!hasPermission) {
                                 return Mono.error(new AccessDeniedException("No permission to stop notebook"));
                             }
@@ -186,7 +185,11 @@ public class NotebookServiceImpl implements NotebookService {
                             String timeStr = now.atZone(ZoneId.of("UTC"))
                                     .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'"));
 
+                            notebook.getMetadata().setAnnotations(
+                                    Optional.ofNullable(notebook.getMetadata().getAnnotations()).orElseGet(HashMap::new)
+                            );
                             notebook.getMetadata().getAnnotations().put("kubeflow-resource-stopped", timeStr);
+                            log.info("notebook annotations: {}", notebook.getMetadata().getAnnotations());
                             notebookClient.inNamespace(namespace).withName(name).patch(notebook);
 
                             return Mono.empty();
@@ -194,8 +197,8 @@ public class NotebookServiceImpl implements NotebookService {
     }
 
     @Override
-    public void startNotebook(String namespace, String name) {
-        userService.getCurrentUsername()
+    public Mono<Void> startNotebook(String namespace, String name) {
+        return userService.getCurrentUsername()
                 .flatMap(currentUsername -> workspaceService.isAdminOrEditor(namespace, currentUsername)
                         .flatMap(hasPermission -> {
                             if (!hasPermission) {

@@ -30,21 +30,20 @@ public class NotebookController {
     }
 
     @DeleteMapping("/{namespace}")
-    public void deleteNotebook(@PathVariable String namespace, @Param("name") String name) {
-        notebookService.deleteNotebook(namespace, name);
+    public Mono<Void> deleteNotebook(@PathVariable String namespace, @Param("name") String name) {
+        return notebookService.deleteNotebook(namespace, name);
     }
 
     @PutMapping("/{namespace}/{name}/status")
-    public void setNotebookStatus(@PathVariable String namespace, @PathVariable String name,
+    public Mono<Void> setNotebookStatus(@PathVariable String namespace, @PathVariable String name,
                                   @Param("action") String action) {
-        switch (action) {
-            case "stop":
-                notebookService.stopNotebook(namespace, name);
-                break;
-            case "start":
-                notebookService.startNotebook(namespace, name);
-            default:
+        return switch (action) {
+            case "stop" -> notebookService.stopNotebook(namespace, name);
+            case "start" -> notebookService.startNotebook(namespace, name);
+            default -> {
                 log.warn("invalid action");
-        }
+                yield Mono.error(new IllegalArgumentException("Invalid action: " + action));
+            }
+        };
     }
 }

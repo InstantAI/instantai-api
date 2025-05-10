@@ -9,8 +9,8 @@ import java.util.List;
 public interface NotebookService {
     Mono<Void> createOrUpdateNotebook(String namespace,Containers containers);
     List<Notebook> listNotebooks(String namespace);
-    void deleteNotebook(String namespace, String name);
-    void stopNotebook(String namespace, String name);
-    void startNotebook(String namespace, String name);
+    Mono<Void> deleteNotebook(String namespace, String name);
+    Mono<Void> stopNotebook(String namespace, String name);
+    Mono<Void> startNotebook(String namespace, String name);
     Mono<Long> getTotalNumber();
 }
