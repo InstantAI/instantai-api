@@ -36,6 +36,7 @@ dependencies {
 	implementation 'org.springframework.security:spring-security-oauth2-resource-server'
 	implementation 'org.springframework.security:spring-security-oauth2-jose'
 	implementation 'org.flywaydb:flyway-core:11.3.1'
+	implementation 'com.auth0:java-jwt:4.4.0'
 // https://mvnrepository.com/artifact/org.flywaydb/flyway-database-postgresql
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql:11.3.1'
 	// https://mvnrepository.com/artifact/io.fabric8/generator-annotations

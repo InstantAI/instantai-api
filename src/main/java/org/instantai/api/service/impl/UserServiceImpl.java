@@ -2,6 +2,7 @@ package org.instantai.api.service.impl;
 
 import lombok.extern.slf4j.Slf4j;
 import org.instantai.api.service.UserService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
@@ -17,13 +18,13 @@ import java.util.Map;
 @Service
 @Slf4j
 public class UserServiceImpl implements UserService {
+    @Value("${spring.security.oauth2.client.registration.keycloak.client-id}")
+    private String clientId;
+
     @Override
     public Mono<String> getCurrentUsername() {
-        log.info("start get username");
         return ReactiveSecurityContextHolder.getContext()
-                .doOnNext(ctx -> log.info("Security context: {}", ctx))
                 .map(SecurityContext::getAuthentication)
-                .doOnNext(auth -> log.info("Authentication: {}", auth))
                 .flatMap(this::extractUsername);
     }
 
@@ -38,7 +39,7 @@ public class UserServiceImpl implements UserService {
                 .map(token -> {
                     Map<String, Object> resourceAccess = token.getToken().getClaim("resource_access");
                     if (resourceAccess == null) return false;
-                    Map<String, Object> instantai = (Map<String, Object>) resourceAccess.get("instantai");
+                    Map<String, Object> instantai = (Map<String, Object>) resourceAccess.get(clientId);
                     if (instantai == null) return false;
                     List<String> roles = (List<String>) instantai.get("roles");
                     return roles != null && roles.contains("admin");

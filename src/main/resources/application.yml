@@ -3,15 +3,15 @@
 #    include-message: always
 spring:
   r2dbc:
-    url: r2dbc:postgresql://localhost:30000/instantai
-    username: postgres
-    password: postgres
+    url: r2dbc:postgresql://localhost:30000/instantai-api
+    username: instantai
+    password: instantai
 
   flyway:
-    enabled: false
-    url: jdbc:postgresql://localhost:30000/instantai
-    user: postgres
-    password: postgres
+    enabled: true
+    url: jdbc:postgresql://localhost:30000/instantai-api
+    user: instantai
+    password: instantai
     locations: classpath:db
   security:
     oauth2:

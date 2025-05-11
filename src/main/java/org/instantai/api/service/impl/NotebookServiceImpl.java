@@ -1,4 +1,5 @@
 package org.instantai.api.service.impl;
+
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 
@@ -89,52 +90,58 @@ public class NotebookServiceImpl implements NotebookService {
         return notebook;
     }
 
-
     @Override
-    public Mono<Void> createOrUpdateNotebook(String namespace,Containers containers) {
+    public Mono<Void> createOrUpdateNotebook(String namespace, Containers containers) {
         List<String> missingFields = validateRequiredFields(containers);
         if (!missingFields.isEmpty()) {
             return Mono.error(new MissingFieldException("Missing required fields", missingFields));
         }
+
         return userService.getCurrentUsername()
-                .flatMap(username -> workspaceService.isAdminOrEditor(namespace, username))
-                .flatMap(hasPermission -> {
-                    if (!hasPermission) {
-                        return Mono.error(new AccessDeniedException("No permission to create/update notebook"));
-                    }
+                .doOnNext(username -> log.info("Creating notebook for user: {}", username))
+                .flatMap(username ->
+                        workspaceService.isAdminOrEditor(namespace, username)
+                                .doOnNext(permitted -> log.info("Permission check for [{} in {}]: {}", username, namespace, permitted))
+                                .flatMap(hasPermission -> {
+                                    if (!hasPermission) {
+                                        return Mono.error(new AccessDeniedException("No permission to create/update notebook"));
+                                    }
 
-                    String name = containers.getName();
-                    String path = String.format("/notebooks/%s/%s", namespace, name);
+                                    String name = containers.getName();
+                                    String path = String.format("/notebooks/%s/%s", namespace, name);
+                                    Notebook notebook = buildNotebookSpec(namespace, name, path, containers);
 
-                    // 构造 Notebook 对象
-                    Notebook notebook = buildNotebookSpec(namespace, name, path, containers);
+                                    MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient = kubernetesClient.resources(Notebook.class);
+                                    Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
 
-                    MixedOperation<Notebook, ?, Resource<Notebook>> notebookClient =
-                            kubernetesClient.resources(Notebook.class);
-                    Resource<Notebook> notebookResource = notebookClient.inNamespace(namespace).withName(name);
-
-                    return Mono.fromCallable(notebookResource::get)
-                            .subscribeOn(Schedulers.boundedElastic())
-                            .flatMap(existing -> {
-                                if (existing != null) {
-                                    log.info("Notebook exists, replacing: {}", existing.getMetadata().getName());
-                                    return Mono.fromCallable(() -> notebookResource.replace(notebook))
+                                    return Mono.fromCallable(notebookResource::get)
                                             .subscribeOn(Schedulers.boundedElastic())
-                                            .then();
-                                } else {
-                                    return Mono.fromCallable(() -> notebookClient.resource(notebook).create())
-                                            .subscribeOn(Schedulers.boundedElastic())
-                                            .doOnSuccess(n -> {
-                                                CreateOrUpdateApiRouteRequest route = new CreateOrUpdateApiRouteRequest();
-                                                route.setPath(path + "/**");
-                                                route.setUri(String.format("http://%s.%s.svc", name, namespace));
-                                                apiRouteService.createApiRoute(route).subscribe();
+                                            .flatMap(existing -> {
+                                                log.info("Notebook exists, replacing: {}", existing.getMetadata().getName());
+                                                return Mono.fromCallable(() -> notebookClient.resource(notebook).create())
+                                                        .subscribeOn(Schedulers.boundedElastic())
+                                                        .flatMap(createdNotebook -> {
+                                                            return Mono.fromCallable(() -> notebookResource.replace(notebook)).subscribeOn(Schedulers.boundedElastic())
+                                                                    .then();
+                                                        });
                                             })
-                                            .then();
-                                }
-                            });
-                });
+                                            .switchIfEmpty(Mono.defer(() -> {
+                                                log.info("Notebook [{}] not found (null), creating...", name);
+                                                return Mono.fromCallable(() -> notebookClient.resource(notebook).create())
+                                                        .subscribeOn(Schedulers.boundedElastic())
+                                                        .flatMap(createdNotebook -> {
+                                                            CreateOrUpdateApiRouteRequest route = new CreateOrUpdateApiRouteRequest();
+                                                            route.setPath(path + "/**");
+                                                            route.setUri(String.format("http://%s.%s.svc", name, namespace));
+                                                            log.info("Creating route for notebook: {}", route);
+                                                            return apiRouteService.createApiRoute(route).then();
+                                                        });
+                                            }));
+
+                                })
+                );
     }
+
 
     @Override
     public List<Notebook> listNotebooks(String namespace) {
