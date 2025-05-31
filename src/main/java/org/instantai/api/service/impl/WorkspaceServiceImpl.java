@@ -286,12 +286,20 @@ public class WorkspaceServiceImpl implements WorkspaceService {
     public Flux<WorkspacePermission> getPermissions(String workspaceName) {
         return userService.getCurrentUsername()
                 .flatMapMany(currentUsername ->
-                        workspacePermissionRepository.findByWorkspaceName(workspaceName)
-                                .filterWhen(permission ->
-                                        isAdminOrEditor(workspaceName, currentUsername))
-                                .switchIfEmpty(Flux.error(new AccessDeniedException("No permission")))
+                        isAdminOrEditor(workspaceName, currentUsername)
+                                .flatMapMany(isAllowed -> {
+                                    if (!isAllowed) {
+                                        log.warn("Access denied for user={} on workspace={}", currentUsername, workspaceName);
+                                        return Flux.error(new AccessDeniedException("No permission"));
+                                    }
+
+                                    log.debug("User {} has permission for workspace {}, fetching records", currentUsername, workspaceName);
+                                    return workspacePermissionRepository.findByWorkspaceName(workspaceName);
+                                })
                 );
     }
+
+
 
     @Override
     public Mono<Boolean> isAdminOrEditor(String workspaceName, String username) {
